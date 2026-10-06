@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#171c21">
+  <title>Metal — Interactive Material Study</title>
+  <style>
+    :root { color-scheme: dark; --ink: #e1e4e7; --muted: #969ea6; --accent: #d4b88c; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #171c21; }
+    body { font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); }
+    #stage { position: fixed; inset: 0; touch-action: none; outline: none; cursor: default; }
+    #stage.can-grab { cursor: grab; }
+    #stage.grabbing { cursor: grabbing; }
+    #stage.camera-mode { cursor: move; }
+    .caption { position: fixed; top: max(26px, env(safe-area-inset-top)); left: 30px; pointer-events: none; }
+    .caption span { display: block; font-size: 10px; letter-spacing: .2em; color: #aeb6bd; }
+    .caption small { display: block; margin-top: 8px; font-size: 10px; color: #75808a; letter-spacing: .04em; }
+    .corner { position: fixed; top: 26px; right: 30px; font-size: 10px; color: #77828c; letter-spacing: .1em; pointer-events: none; }
+    #ui { position: fixed; bottom: max(22px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 28px); }
+    #hint { margin: 0 0 13px; text-align: center; font-size: 11px; color: #a1a9b0; text-shadow: 0 1px 8px #000; letter-spacing: .015em; }
+    .toolbar { display: flex; gap: 14px; align-items: center; padding: 9px 12px; border: 1px solid #ffffff12; border-radius: 14px; background: #20262bea; box-shadow: 0 8px 32px #0004; backdrop-filter: blur(16px); }
+    .modes { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: #14191dc4; }
+    button { border: 0; border-radius: 7px; padding: 9px 11px; background: transparent; color: #9aa4ad; font: inherit; font-size: 11px; white-space: nowrap; cursor: pointer; transition: color .15s, background .15s; }
+    button:hover { background: #ffffff0b; color: #fff; }
+    button:focus-visible, input:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+    button[aria-pressed="true"] { background: #343d45; color: #eceeef; box-shadow: 0 1px 4px #0003; }
+    button:disabled { color: #59636b; cursor: default; background: transparent; }
+    .divider { width: 1px; height: 22px; background: #ffffff12; }
+    .stiffness { display: grid; grid-template-columns: auto 104px; align-items: center; gap: 10px; font-size: 10px; color: #a7afb6; }
+    .stiffness label { min-width: 69px; }
+    .stiffness output { color: #d2b58c; font-variant-numeric: tabular-nums; margin-left: 4px; }
+    input[type="range"] { appearance: none; width: 104px; height: 3px; background: #53606a; border-radius: 3px; cursor: ew-resize; margin: 0; accent-color: var(--accent); }
+    input[type="range"]::-webkit-slider-thumb { appearance: none; width: 11px; height: 11px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px #d4b88c0d; }
+    input[type="range"]::-moz-range-thumb { border: 0; width: 11px; height: 11px; border-radius: 50%; background: var(--accent); }
+    .icon { width: 31px; height: 31px; padding: 6px; display: grid; place-items: center; }
+    .icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+    body.ui-hidden .interface { display: none !important; }
+    #loading { position: fixed; inset: 0; z-index: 10; display: grid; place-content: center; gap: 15px; text-align: center; background: #171c21; font-size: 12px; color: #9aa4ad; transition: opacity .45s; }
+    #loading.finished { opacity: 0; pointer-events: none; }
+    .loader { width: 23px; height: 23px; border: 1px solid #ffffff16; border-top-color: #ccb18a; border-radius: 50%; margin: auto; animation: spin 1.1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading.error { padding: 30px; line-height: 1.7; }
+    #loading.error .loader { display: none; }
+    #toast { position: fixed; bottom: 105px; left: 50%; transform: translateX(-50%); font-size: 11px; color: #d4b88c; opacity: 0; transition: opacity .25s; pointer-events: none; }
+    #toast.visible { opacity: 1; }
+    @media (max-width: 650px) {
+      .caption { top: 20px; left: 20px; } .corner { display: none; }
+      #ui { bottom: max(14px, env(safe-area-inset-bottom)); width: calc(100% - 24px); }
+      #hint { font-size: 10px; margin-bottom: 10px; }
+      .toolbar { gap: 7px; padding: 8px; justify-content: space-between; flex-wrap: wrap; }
+      .stiffness { gap: 5px; grid-template-columns: auto 70px; }
+      input[type="range"] { width: 70px; }
+      button { padding: 8px; font-size: 10px; }
+      .divider { display: none; }
+      .stiffness label { min-width: 0; }
+      .icon { width: 28px; height: 28px; }
+    }
+    @media (prefers-reduced-motion: reduce) { .loader { animation: none; } }
+  </style>
+  <!-- Core and every addon are pinned to the same Three.js release. Internet is required. -->
+  <script type="importmap">
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <canvas id="stage" tabindex="0" aria-label="Interactive metal cloth and rolling ceramic sphere. Left-drag the cloth or sphere; right-drag to orbit. H toggles the interface, R resets the scene, F releases the anchors."></canvas>
+  <div class="caption interface"><span>MATERIAL / 01</span><small>1,008 plates · metal &amp; ceramic</small></div>
+  <div class="corner interface">REALTIME STUDY</div>
+  <div id="ui" class="interface">
+    <p id="hint">Drag cloth or sphere · right-drag to orbit · scroll to zoom</p>
+    <div class="toolbar" role="toolbar" aria-label="Scene controls">
+      <div class="modes" role="group" aria-label="Pointer mode">
+        <button id="clothMode" aria-pressed="true" title="Drag the cloth or roll the sphere">Interact</button>
+        <button id="cameraMode" aria-pressed="false" title="Orbit with the left mouse button or one finger">Camera</button>
+      </div>
+      <span class="divider"></span>
+      <div class="stiffness"><label for="stiffness">Stiffness<output id="stiffnessValue">38</output></label><input id="stiffness" type="range" min="0" max="100" value="38" aria-label="Cloth stiffness"></div>
+      <span class="divider"></span>
+      <button id="release" title="Release both anchors (F)">Release</button>
+      <button id="reset" class="icon" aria-label="Reset the cloth and sphere" title="Reset (R)"><svg viewBox="0 0 24 24"><path d="M4 10a8 8 0 1 1 .8 6M4 4v6h6"/></svg></button>
+      <button id="hide" class="icon" aria-label="Hide the interface" title="Hide UI (H). Restore with H, Escape or a double-click."><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path d="m3 3 18 18"/></svg></button>
+    </div>
+  </div>
+  <div id="toast" class="interface" role="status"></div>
+  <div id="loading" role="status"><div class="loader"></div><span id="loadingText">Preparing the material…</span></div>
+  <script>
+    window.addEventListener('error', event => {
+      const loader = document.getElementById('loading');
+      if (!loader || loader.classList.contains('finished')) return;
+      loader.classList.add('error');
+      document.getElementById('loadingText').textContent = 'Unable to start the scene. Check your internet connection and browser support for WebGL 2.';
+    });
+    setTimeout(() => {
+      if (!window.metalClothReady) document.getElementById('loadingText').textContent = 'Loading Three.js… An internet connection is required for the CDN libraries.';
+    }, 12000);
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+    import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
+
+    // A single XPBD / Verlet surface drives 1,008 rigid instances. No asset files.
+    const canvas = document.getElementById('stage');
+    const loading = document.getElementById('loading');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
+    const maxPixelRatio = Math.min(devicePixelRatio, 1.65);
+    renderer.setPixelRatio(maxPixelRatio);
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x171c21);
+    scene.fog = new THREE.Fog(0x171c21, 17, 34);
+    const camera = new THREE.PerspectiveCamera(36, innerWidth / innerHeight, 0.08, 60);
+    const homeTarget = new THREE.Vector3(.48, 1.47, .05);
+    const homeDirection = new THREE.Vector3(4.8, 4.0, 9.5).normalize();
+    const controls = new OrbitControls(camera, canvas);
+    controls.target.copy(homeTarget);
+    controls.enableDamping = true;
+    controls.dampingFactor = .09;
+    controls.enablePan = false;
+    controls.minDistance = 5.0;
+    controls.maxDistance = 18;
+    controls.minPolarAngle = .20;
+    controls.maxPolarAngle = Math.PI * .485;
+    controls.rotateSpeed = .65;
+    controls.zoomSpeed = .65;
+    controls.mouseButtons.LEFT = null;
+    controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY;
+    controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
+    controls.touches.ONE = null;
+    controls.touches.TWO = THREE.TOUCH.DOLLY_ROTATE;
+
+    function frameCamera() {
+      const distance = 10.1 * Math.max(1, .98 / (innerWidth / innerHeight));
+      camera.position.copy(homeTarget).addScaledVector(homeDirection, distance);
+      controls.target.copy(homeTarget);
+      controls.maxDistance = Math.max(18, distance * 1.35);
+      controls.update();
+    }
+    frameCamera();
+
+    // Procedural studio: bright softbox rectangles, dark flags and walls.
+    // Captured once with PMREM; these are reflection geometry, not downloaded HDRs.
+    const studio = new THREE.Scene();
+    studio.background = new THREE.Color(0x353e48);
+    const room = new THREE.Mesh(new THREE.BoxGeometry(24, 18, 24), new THREE.MeshBasicMaterial({ color: 0x303841, side: THREE.BackSide }));
+    studio.add(room);
+    function panel(w, h, position, aim, color, intensity) {
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(intensity), side: THREE.DoubleSide }));
+      mesh.position.set(...position); mesh.lookAt(...aim); studio.add(mesh);
+    }
+    panel(5.0, 7.0, [-5, 5, 3], [0, 1, 0], 0xffeed9, 4.2);
+    panel(1.5, 8.0, [5, 3, -3], [0, 1, 0], 0xc9def4, 5.4);
+    panel(7.0, 3.0, [0, 8, -1], [0, 0, 0], 0xf2f5f6, 3.6);
+    panel(2.0, 6.0, [-2, 1, -7], [0, 1, 0], 0x06090d, .7);
+    panel(3.5, 6.0, [5, 1, 5], [0, 1, 0], 0x050709, 1);
+    panel(2.0, 5.0, [-6, 1, -3], [0, 1, 0], 0x090c10, 1);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const environment = pmrem.fromScene(studio, .035, .1, 40);
+    scene.environment = environment.texture;
+    scene.environmentIntensity = .8;
+    pmrem.dispose();
+    studio.traverse(object => { if (object.isMesh) { object.geometry.dispose(); object.material.dispose(); } });
+
+    RectAreaLightUniformsLib.init();
+    const softbox = new THREE.RectAreaLight(0xffead2, 7, 5, 6);
+    softbox.position.set(-4.5, 6.5, 4); softbox.lookAt(0, 1, 0); scene.add(softbox);
+    const rim = new THREE.RectAreaLight(0xb5d0ef, 8, 2, 5);
+    rim.position.set(4.5, 4.5, -2.5); rim.lookAt(0, 1.3, 0); scene.add(rim);
+    const key = new THREE.DirectionalLight(0xffefda, 1.8);
+    key.position.set(-3.8, 7, 4.6);
+    key.target.position.set(0, 1, 0); scene.add(key, key.target);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    Object.assign(key.shadow.camera, { left: -6, right: 6, top: 6, bottom: -5, near: .5, far: 19 });
+    key.shadow.bias = -.00015;
+    key.shadow.normalBias = .012;
+    key.shadow.radius = 3;
+    scene.add(new THREE.HemisphereLight(0xb6ccdf, 0x282019, .28));
+
+    const table = new THREE.Mesh(new RoundedBoxGeometry(80, .32, 80, 1, .12), new THREE.MeshStandardMaterial({ color: 0x252c32, metalness: .12, roughness: .76 }));
+    table.position.y = -.16;
+    table.receiveShadow = true;
+    scene.add(table);
+
+    const SPHERE_HOME = Object.freeze({ x: 1.5, y: 1.045, z: -.35, r: 1.045 });
+    const SPHERE = { ...SPHERE_HOME };
+    const sphereVelocity = new THREE.Vector3();
+    const rollingAxis = new THREE.Vector3(), rollingRotation = new THREE.Quaternion();
+    let sphereGrab = null, sphereStepX = 0, sphereStepZ = 0;
+    const ceramic = new THREE.MeshPhysicalMaterial({ color: 0xe5dfd3, metalness: 0, roughness: .22, clearcoat: .38, clearcoatRoughness: .18, envMapIntensity: .55 });
+    // Two quiet glaze lines make real rolling rotation legible on a smooth sphere.
+    // They are analytic material color, with no image files or raised geometry.
+    ceramic.onBeforeCompile = shader => {
+      shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCeramicLocal;');
+      shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvCeramicLocal = position / 1.045;');
+      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vCeramicLocal;');
+      shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+        float glazeDistance = min(abs(vCeramicLocal.y + 0.22), abs(vCeramicLocal.y + 0.275));
+        float glazeWidth = max(fwidth(vCeramicLocal.y), 0.0015);
+        float glazeLine = 1.0 - smoothstep(0.003, 0.003 + glazeWidth, glazeDistance);
+        diffuseColor.rgb *= 1.0 - 0.24 * glazeLine;
+      `);
+    };
+    const sphere = new THREE.Mesh(new THREE.SphereGeometry(SPHERE.r, 72, 48), ceramic);
+    sphere.position.set(SPHERE.x, SPHERE.y, SPHERE.z);
+    sphere.castShadow = true; sphere.receiveShadow = true; scene.add(sphere);
+
+    // Thin mechanical suspension. Exactly two particles are fixed, not a whole edge.
+    const NX = 36, NY = 28, COLS = NX + 1, ROWS = NY + 1;
+    const COUNT = COLS * ROWS, PLATES = NX * NY;
+    const WIDTH = 5.45, LENGTH = 4.9, DX = WIDTH / NX, DY = LENGTH / NY;
+    const STEP = 1 / 90, ITERATIONS = 16, CLEARANCE = .055, FLOOR = .048;
+    const pins = [0, NX];
+    const anchors = [new THREE.Vector3(-WIDTH / 2 + .32, 3.42, -1.6), new THREE.Vector3(WIDTH / 2 - .32, 3.58, -1.48)];
+    const positions = new Float64Array(COUNT * 3);
+    const previous = new Float64Array(COUNT * 3);
+    const start = new Float64Array(COUNT * 3);
+    const inverseMass = new Float64Array(COUNT).fill(1);
+    const contact = new Uint8Array(COUNT);
+    let attached = true, stiffness = .38, grab = null, mode = 'cloth';
+    let accumulator = 0, lastTime = 0, warm = false;
+
+    const mounts = new THREE.Group();
+    const mountMaterial = new THREE.MeshStandardMaterial({ color: 0x7d858a, metalness: .95, roughness: .29 });
+    for (const anchor of anchors) {
+      const cable = new THREE.Mesh(new THREE.CylinderGeometry(.008, .008, 3.2, 8), mountMaterial);
+      cable.position.copy(anchor); cable.position.y += 1.60; mounts.add(cable);
+      const collar = new THREE.Mesh(new RoundedBoxGeometry(.13, .095, .07, 1, .02), mountMaterial);
+      collar.position.copy(anchor); mounts.add(collar);
+      const bolt = new THREE.Mesh(new THREE.SphereGeometry(.035, 12, 8), mountMaterial);
+      bolt.position.copy(anchor); bolt.position.z += .043; mounts.add(bolt);
+    }
+    scene.add(mounts);
+
+    // Metric constraints: warp/weft, both diagonals, and compliant two-hop bending.
+    // Diagonals preserve area/shear; minimum edge lengths prevent a degenerate line.
+    const edgeA = [], edgeB = [], rest = [], kind = [];
+    function link(a, b, length, type) { edgeA.push(a); edgeB.push(b); rest.push(length); kind.push(type); }
+    for (let y = 0; y <= NY; y++) for (let x = 0; x <= NX; x++) {
+      const i = y * COLS + x;
+      if (x < NX) link(i, i + 1, DX, 0);
+      if (y < NY) link(i, i + COLS, DY, 0);
+      if (x < NX && y < NY) {
+        link(i, i + COLS + 1, Math.hypot(DX, DY), 1);
+        link(i + 1, i + COLS, Math.hypot(DX, DY), 1);
+      }
+      if (x < NX - 1) link(i, i + 2, DX * 2, 2);
+      if (y < NY - 1) link(i, i + COLS * 2, DY * 2, 2);
+    }
+    const A = Uint16Array.from(edgeA), B = Uint16Array.from(edgeB);
+    const REST = Float64Array.from(rest), KIND = Uint8Array.from(kind);
+    const lambda = new Float64Array(A.length);
+    const compliance = new Float64Array(3);
+    const tetherLeft = new Float64Array(COUNT), tetherRight = new Float64Array(COUNT);
+    for (let y = 0; y <= NY; y++) for (let x = 0; x <= NX; x++) {
+      const id = y * COLS + x;
+      tetherLeft[id] = Math.hypot(x * DX, y * DY) * 1.008;
+      tetherRight[id] = Math.hypot((NX - x) * DX, y * DY) * 1.008;
+    }
+    function updateCompliance() {
+      compliance[0] = 1.5e-8 / (STEP * STEP);
+      compliance[1] = 8e-8 / (STEP * STEP);
+      // Wide bending range, with a small residual resistance even at the soft end.
+      compliance[2] = (2.5e-3 * Math.pow(.004, stiffness)) / (STEP * STEP);
+    }
+    updateCompliance();
+
+    const backingGeometry = new THREE.BufferGeometry();
+    const backingPositions = new Float32Array(COUNT * 3);
+    const indices = [];
+    for (let y = 0; y < NY; y++) for (let x = 0; x < NX; x++) {
+      const a = y * COLS + x, b = a + 1, c = a + COLS, d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+    backingGeometry.setAttribute('position', new THREE.BufferAttribute(backingPositions, 3).setUsage(THREE.DynamicDrawUsage));
+    backingGeometry.setIndex(indices);
+    const backing = new THREE.Mesh(backingGeometry, new THREE.MeshStandardMaterial({ color: 0x101519, roughness: .95, metalness: .15, side: THREE.DoubleSide }));
+    backing.castShadow = true; backing.receiveShadow = true; backing.frustumCulled = false; scene.add(backing);
+
+    const plateGeometry = new RoundedBoxGeometry(DX * .948, DY * .948, .026, 1, .009);
+    const metal = new THREE.MeshPhysicalMaterial({ color: 0xb9bec3, metalness: 1, roughness: .285, envMapIntensity: 1.05, clearcoat: .08, clearcoatRoughness: .28 });
+    const plates = new THREE.InstancedMesh(plateGeometry, metal, PLATES);
+    plates.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    plates.castShadow = true; plates.receiveShadow = true; plates.frustumCulled = false;
+    // A conservative fixed bound keeps picking valid after any deformation.
+    plates.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 2, 0), 14);
+    const shade = new THREE.Color();
+    let randomState = 73421;
+    function random() { randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0; return randomState / 4294967296; }
+    for (let i = 0; i < PLATES; i++) {
+      const value = .88 + random() * .12;
+      shade.setRGB(value, value * .985, value * .962);
+      plates.setColorAt(i, shade);
+    }
+    scene.add(plates);
+
+    const marker = new THREE.Mesh(new THREE.SphereGeometry(.026, 12, 8), new THREE.MeshBasicMaterial({ color: 0xe9c28a, depthTest: false }));
+    marker.visible = false; marker.renderOrder = 4; scene.add(marker);
+    const raycaster = new THREE.Raycaster(), pointer = new THREE.Vector2();
+    const matrix = new THREE.Matrix4(), inverse = new THREE.Matrix4();
+    const center = new THREE.Vector3(), tangent = new THREE.Vector3(), crossTangent = new THREE.Vector3(), normal = new THREE.Vector3();
+    const hitLocal = new THREE.Vector3(), scratch = new THREE.Vector3();
+
+    function initializeShape() {
+      for (let y = 0; y <= NY; y++) for (let x = 0; x <= NX; x++) {
+        const u = x / NX, v = y / NY, i = (y * COLS + x) * 3;
+        // Deterministic three-dimensional seed; only physics is used thereafter.
+        positions[i] = (u - .5) * WIDTH + .12 * Math.sin(v * 4.4) * Math.sin(u * Math.PI);
+        positions[i + 1] = 3.5 - 3.32 * v - .54 * Math.sin(u * Math.PI) * (1 - v) + .10 * Math.sin(u * Math.PI * 5 + v * 4) * Math.sin(v * Math.PI);
+        positions[i + 2] = -1.55 + 3.8 * v + .12 * Math.sin(u * Math.PI * 3) * Math.sin(v * Math.PI);
+      }
+      inverseMass.fill(1); attached = true;
+      for (let k = 0; k < 2; k++) {
+        inverseMass[pins[k]] = 0;
+        anchors[k].toArray(positions, pins[k] * 3);
+      }
+      collide(false);
+      previous.set(positions);
+    }
+
+    function solveDistances(reverse) {
+      for (let n = 0; n < A.length; n++) {
+        const e = reverse ? A.length - 1 - n : n;
+        const ai = A[e], bi = B[e], a = ai * 3, b = bi * 3;
+        const wa = inverseMass[ai], wb = inverseMass[bi], total = wa + wb;
+        if (!total) continue;
+        const dx = positions[b] - positions[a], dy = positions[b + 1] - positions[a + 1], dz = positions[b + 2] - positions[a + 2];
+        const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (length < 1e-9) continue;
+        const alpha = compliance[KIND[e]];
+        const dl = (-(length - REST[e]) - alpha * lambda[e]) / (total + alpha);
+        lambda[e] += dl;
+        let correction = -dl / length;
+        // Safety band for warp/weft and diagonals under aggressive pointer motion.
+        if (KIND[e] < 2 && length > REST[e] * 1.035) correction = Math.max(correction, (length - REST[e] * 1.035) / (length * total));
+        if (KIND[e] < 2 && length < REST[e] * .70) correction = Math.min(correction, (length - REST[e] * .70) / (length * total));
+        const ca = correction * wa, cb = correction * wb;
+        positions[a] += dx * ca; positions[a + 1] += dy * ca; positions[a + 2] += dz * ca;
+        positions[b] -= dx * cb; positions[b + 1] -= dy * cb; positions[b + 2] -= dz * cb;
+      }
+    }
+
+    function solveTethers() {
+      if (!attached) return;
+      // Unilateral geodesic bounds distribute attachment tension across the sheet.
+      // They never pull slack material straight or restore a memorized shape.
+      for (let k = 0; k < 2; k++) {
+        const anchor = anchors[k], radii = k === 0 ? tetherLeft : tetherRight;
+        for (let i = 0; i < COUNT; i++) {
+          if (!inverseMass[i]) continue;
+          const p = i * 3, dx = positions[p] - anchor.x, dy = positions[p + 1] - anchor.y, dz = positions[p + 2] - anchor.z;
+          const d2 = dx * dx + dy * dy + dz * dz, radius = radii[i];
+          if (d2 > radius * radius) {
+            const scale = radius / Math.sqrt(d2);
+            positions[p] = anchor.x + dx * scale;
+            positions[p + 1] = anchor.y + dy * scale;
+            positions[p + 2] = anchor.z + dz * scale;
+          }
+        }
+      }
+    }
+
+    function rollSphere() {
+      const oldX = SPHERE.x, oldZ = SPHERE.z;
+      if (sphereGrab) {
+        const dx = sphereGrab.desired.x - oldX, dz = sphereGrab.desired.z - oldZ;
+        // Bounded travel per fixed step prevents the moving collider tunneling.
+        const scale = Math.min(.25, .03 / (Math.hypot(dx, dz) || 1));
+        SPHERE.x += dx * scale; SPHERE.z += dz * scale;
+        sphereVelocity.set((SPHERE.x - oldX) / STEP, 0, (SPHERE.z - oldZ) / STEP);
+      } else {
+        const speed = sphereVelocity.length();
+        if (speed > .006) {
+          const remaining = Math.max(0, speed - 1.1 * STEP) * Math.exp(-.65 * STEP);
+          sphereVelocity.multiplyScalar(remaining / speed);
+          SPHERE.x += sphereVelocity.x * STEP; SPHERE.z += sphereVelocity.z * STEP;
+        } else sphereVelocity.set(0, 0, 0);
+      }
+      const x = THREE.MathUtils.clamp(SPHERE.x, -4.5, 4.5);
+      const z = THREE.MathUtils.clamp(SPHERE.z, -3.6, 4.1);
+      if (x !== SPHERE.x) sphereVelocity.x = 0;
+      if (z !== SPHERE.z) sphereVelocity.z = 0;
+      SPHERE.x = x; SPHERE.z = z;
+      sphereStepX = x - oldX; sphereStepZ = z - oldZ;
+      const distance = Math.hypot(sphereStepX, sphereStepZ);
+      if (distance > 1e-8) {
+        rollingAxis.set(sphereStepZ / distance, 0, -sphereStepX / distance);
+        rollingRotation.setFromAxisAngle(rollingAxis, distance / SPHERE.r);
+        sphere.quaternion.premultiply(rollingRotation).normalize();
+      }
+      sphere.position.set(SPHERE.x, SPHERE.y, SPHERE.z);
+    }
+
+    function collide(withFriction) {
+      const radius = SPHERE.r + CLEARANCE, r2 = radius * radius;
+      for (let i = 0; i < COUNT; i++) {
+        if (!inverseMass[i]) continue;
+        const p = i * 3;
+        let nx = 0, ny = 0, nz = 0;
+        const dx = positions[p] - SPHERE.x, dy = positions[p + 1] - SPHERE.y, dz = positions[p + 2] - SPHERE.z;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < r2) {
+          const length = Math.sqrt(d2) || 1e-6;
+          nx = dx / length; ny = dy / length; nz = dz / length;
+          positions[p] = SPHERE.x + nx * radius;
+          positions[p + 1] = SPHERE.y + ny * radius;
+          positions[p + 2] = SPHERE.z + nz * radius;
+          contact[i] = 1;
+        }
+        if (positions[p + 1] < FLOOR) {
+          positions[p + 1] = FLOOR; nx = 0; ny = 1; nz = 0; contact[i] = 2;
+          // Resolve the sphere/floor intersection jointly, including tile clearance.
+          // A node cannot be squeezed through the narrow gap below the sphere.
+          const sx = positions[p] - SPHERE.x, sz = positions[p + 2] - SPHERE.z;
+          const horizontal = Math.hypot(sx, sz);
+          const minimum = Math.sqrt(Math.max(0, r2 - (FLOOR - SPHERE.y) ** 2));
+          if (horizontal < minimum) {
+            const scale = minimum / (horizontal || 1);
+            positions[p] = SPHERE.x + (horizontal ? sx * scale : minimum);
+            positions[p + 2] = SPHERE.z + (horizontal ? sz * scale : 0);
+          }
+        }
+        if (withFriction && contact[i]) {
+          if (contact[i] === 1 && Math.hypot(positions[p] - SPHERE.x, positions[p + 1] - SPHERE.y, positions[p + 2] - SPHERE.z) > radius + .015) continue;
+          // Kill inward velocity and damp tangential velocity at contact.
+          // Recover a normal even if an earlier solver iteration made contact.
+          if (!nx && !ny && !nz) {
+            if (contact[i] === 2) ny = 1;
+            else {
+              const sx = positions[p] - SPHERE.x, sy = positions[p + 1] - SPHERE.y, sz = positions[p + 2] - SPHERE.z;
+              const inv = 1 / Math.hypot(sx, sy, sz); nx = sx * inv; ny = sy * inv; nz = sz * inv;
+            }
+          }
+          // Friction is relative to the rolling surface: translation + omega x r.
+          // The sphere is at rest at the table contact and moves twice as fast on top.
+          const sx = contact[i] === 1 ? sphereStepX * (1 + ny) : 0;
+          const sy = contact[i] === 1 ? -sphereStepX * nx - sphereStepZ * nz : 0;
+          const sz = contact[i] === 1 ? sphereStepZ * (1 + ny) : 0;
+          let vx = positions[p] - previous[p] - sx, vy = positions[p + 1] - previous[p + 1] - sy, vz = positions[p + 2] - previous[p + 2] - sz;
+          const vn = vx * nx + vy * ny + vz * nz;
+          const normalSpeed = Math.max(0, vn) * .25;
+          const friction = contact[i] === 2 ? .78 : .94;
+          vx = (vx - vn * nx) * friction + nx * normalSpeed;
+          vy = (vy - vn * ny) * friction + ny * normalSpeed;
+          vz = (vz - vn * nz) * friction + nz * normalSpeed;
+          previous[p] = positions[p] - vx - sx; previous[p + 1] = positions[p + 1] - vy - sy; previous[p + 2] = positions[p + 2] - vz - sz;
+        }
+      }
+    }
+
+    function solveGrab() {
+      if (!grab) return;
+      let px = 0, py = 0, pz = 0, mass = 0;
+      for (let k = 0; k < 4; k++) {
+        const id = grab.nodes[k], p = id * 3, w = grab.weights[k];
+        px += positions[p] * w; py += positions[p + 1] * w; pz += positions[p + 2] * w;
+        mass += inverseMass[id] * w * w;
+      }
+      if (mass < 1e-8) return;
+      let dx = grab.target.x - px, dy = grab.target.y - py, dz = grab.target.z - pz;
+      const scale = Math.min(1, .008 / (Math.hypot(dx, dy, dz) || 1));
+      const denominator = mass + .000001 / (STEP * STEP);
+      dx *= scale / denominator; dy *= scale / denominator; dz *= scale / denominator;
+      for (let k = 0; k < 4; k++) {
+        const id = grab.nodes[k], p = id * 3, w = grab.weights[k] * inverseMass[id];
+        positions[p] += dx * w; positions[p + 1] += dy * w; positions[p + 2] += dz * w;
+      }
+    }
+
+    let stepNumber = 0;
+    function simulate() {
+      rollSphere();
+      contact.fill(0);
+      if (grab) {
+        scratch.copy(grab.desired).sub(grab.target);
+        const length = scratch.length();
+        // Limit target speed instead of teleporting the cloth on pointer jumps.
+        grab.target.addScaledVector(scratch, Math.min(.30, .075 / (length || 1)));
+      }
+      const damping = warm ? .93 : .991;
+      for (let i = 0; i < COUNT; i++) {
+        if (!inverseMass[i]) continue;
+        const p = i * 3;
+        let vx = (positions[p] - previous[p]) * damping;
+        let vy = (positions[p + 1] - previous[p + 1]) * damping;
+        let vz = (positions[p + 2] - previous[p + 2]) * damping;
+        const cap = Math.min(1, .11 / (Math.hypot(vx, vy, vz) || 1));
+        vx *= cap; vy *= cap; vz *= cap;
+        previous[p] = positions[p]; previous[p + 1] = positions[p + 1]; previous[p + 2] = positions[p + 2];
+        positions[p] += vx; positions[p + 1] += vy - 9.81 * STEP * STEP; positions[p + 2] += vz;
+      }
+      lambda.fill(0);
+      for (let iteration = 0; iteration < ITERATIONS; iteration++) {
+        solveTethers();
+        solveGrab();
+        solveDistances((iteration + stepNumber) % 2 === 1);
+        collide(false);
+      }
+      collide(true);
+      if (grab) {
+        for (let k = 0; k < 4; k++) {
+          const p = grab.nodes[k] * 3, damping = .15 * grab.weights[k];
+          for (let axis = 0; axis < 3; axis++) previous[p + axis] += (positions[p + axis] - previous[p + axis]) * damping;
+        }
+      }
+      stepNumber++;
+    }
+
+    function updateGeometry() {
+      backingPositions.set(positions);
+      backingGeometry.attributes.position.needsUpdate = true;
+      backingGeometry.computeVertexNormals();
+      for (let y = 0; y < NY; y++) for (let x = 0; x < NX; x++) {
+        const a = (y * COLS + x) * 3, b = a + 3, c = a + COLS * 3, d = c + 3;
+        center.set((positions[a] + positions[b] + positions[c] + positions[d]) * .25, (positions[a + 1] + positions[b + 1] + positions[c + 1] + positions[d + 1]) * .25, (positions[a + 2] + positions[b + 2] + positions[c + 2] + positions[d + 2]) * .25);
+        tangent.set(positions[b] + positions[d] - positions[a] - positions[c], positions[b + 1] + positions[d + 1] - positions[a + 1] - positions[c + 1], positions[b + 2] + positions[d + 2] - positions[a + 2] - positions[c + 2]).normalize();
+        crossTangent.set(positions[a] + positions[b] - positions[c] - positions[d], positions[a + 1] + positions[b + 1] - positions[c + 1] - positions[d + 1], positions[a + 2] + positions[b + 2] - positions[c + 2] - positions[d + 2]);
+        normal.crossVectors(tangent, crossTangent).normalize();
+        if (normal.lengthSq() < .5) normal.set(0, 1, 0);
+        crossTangent.crossVectors(normal, tangent).normalize();
+        center.addScaledVector(normal, .018);
+        const lowestCorner = .5 * (DX * .948 * Math.abs(tangent.y) + DY * .948 * Math.abs(crossTangent.y) + .026 * Math.abs(normal.y));
+        center.y = Math.max(center.y, lowestCorner + .006);
+        // Rigid orthonormal basis: never scale individual metal plates.
+        matrix.makeBasis(tangent, crossTangent, normal);
+        matrix.setPosition(center);
+        plates.setMatrixAt(y * NX + x, matrix);
+      }
+      plates.instanceMatrix.needsUpdate = true;
+      if (grab) {
+        marker.position.set(0, 0, 0);
+        for (let k = 0; k < 4; k++) {
+          const p = grab.nodes[k] * 3, w = grab.weights[k];
+          marker.position.x += positions[p] * w; marker.position.y += positions[p + 1] * w; marker.position.z += positions[p + 2] * w;
+        }
+        marker.position.add(grab.offset);
+      }
+    }
+
+    function rayAt(event) {
+      const rect = canvas.getBoundingClientRect();
+      pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1);
+      raycaster.setFromCamera(pointer, camera);
+    }
+    function pick(event) {
+      rayAt(event);
+      // Select only the frontmost visible object, including the cloth's dark back.
+      const hits = raycaster.intersectObjects([plates, backing, sphere, table], false);
+      return hits.length && (hits[0].object === plates || hits[0].object === sphere) ? hits[0] : null;
+    }
+
+    function beginGrab(event, hit) {
+      const tile = hit.instanceId, x = tile % NX, y = Math.floor(tile / NX);
+      plates.getMatrixAt(tile, matrix); inverse.copy(matrix).invert();
+      hitLocal.copy(hit.point).applyMatrix4(inverse);
+      const u = THREE.MathUtils.clamp(hitLocal.x / DX + .5, 0, 1);
+      const v = THREE.MathUtils.clamp(.5 - hitLocal.y / DY, 0, 1);
+      const a = y * COLS + x;
+      const nodes = [a, a + 1, a + COLS, a + COLS + 1];
+      const weights = [(1 - u) * (1 - v), u * (1 - v), (1 - u) * v, u * v];
+      const surfacePoint = new THREE.Vector3();
+      for (let k = 0; k < 4; k++) surfacePoint.addScaledVector(scratch.fromArray(positions, nodes[k] * 3), weights[k]);
+      const direction = camera.getWorldDirection(new THREE.Vector3());
+      grab = { pointerId: event.pointerId, nodes, weights, offset: hit.point.clone().sub(surfacePoint), desired: surfacePoint.clone(), target: surfacePoint.clone(), plane: new THREE.Plane().setFromNormalAndCoplanarPoint(direction, hit.point) };
+      controls.enabled = false;
+      canvas.classList.add('grabbing'); canvas.classList.remove('can-grab');
+      marker.visible = !document.body.classList.contains('ui-hidden');
+      try { canvas.setPointerCapture(event.pointerId); } catch {}
+    }
+
+    function beginSphereGrab(event, hit) {
+      sphereGrab = {
+        pointerId: event.pointerId,
+        offset: hit.point.clone().sub(sphere.position),
+        desired: sphere.position.clone(),
+        plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -hit.point.y)
+      };
+      sphereVelocity.set(0, 0, 0);
+      controls.enabled = false;
+      marker.visible = false;
+      canvas.classList.add('grabbing'); canvas.classList.remove('can-grab');
+      try { canvas.setPointerCapture(event.pointerId); } catch {}
+    }
+
+    function endGrab(cancelMotion = false) {
+      if (!grab && !sphereGrab) return;
+      const pointerId = (grab || sphereGrab).pointerId;
+      if (cancelMotion && sphereGrab) sphereVelocity.set(0, 0, 0);
+      grab = null; sphereGrab = null; marker.visible = false;
+      controls.enabled = true; canvas.classList.remove('grabbing');
+      try { if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId); } catch {}
+    }
+
+    canvas.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || mode !== 'cloth' || grab || sphereGrab || !window.metalClothReady) return;
+      const hit = pick(event);
+      if (!hit) return;
+      if (hit.object === sphere) beginSphereGrab(event, hit);
+      else beginGrab(event, hit);
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, { capture: true });
+    let hoverTime = 0;
+    canvas.addEventListener('pointermove', event => {
+      if (sphereGrab && event.pointerId === sphereGrab.pointerId) {
+        rayAt(event);
+        const destination = raycaster.ray.intersectPlane(sphereGrab.plane, scratch);
+        if (destination) {
+          sphereGrab.desired.set(
+            THREE.MathUtils.clamp(destination.x - sphereGrab.offset.x, -4.5, 4.5),
+            SPHERE.y,
+            THREE.MathUtils.clamp(destination.z - sphereGrab.offset.z, -3.6, 4.1)
+          );
+        }
+        return;
+      }
+      if (grab && event.pointerId === grab.pointerId) {
+        rayAt(event);
+        const destination = raycaster.ray.intersectPlane(grab.plane, scratch);
+        if (destination) {
+          grab.desired.copy(destination).sub(grab.offset);
+          grab.desired.x = THREE.MathUtils.clamp(grab.desired.x, -6, 6);
+          grab.desired.y = THREE.MathUtils.clamp(grab.desired.y, FLOOR, 6.5);
+          grab.desired.z = THREE.MathUtils.clamp(grab.desired.z, -5, 6);
+          const dx = grab.desired.x - SPHERE.x, dy = grab.desired.y - SPHERE.y, dz = grab.desired.z - SPHERE.z;
+          const length = Math.hypot(dx, dy, dz), radius = SPHERE.r + CLEARANCE;
+          if (length < radius) grab.desired.set(SPHERE.x + dx / (length || 1) * radius, SPHERE.y + dy / (length || 1) * radius, SPHERE.z + dz / (length || 1) * radius);
+        }
+        return;
+      }
+      if (mode === 'cloth' && event.pointerType !== 'touch' && event.buttons === 0 && performance.now() - hoverTime > 65) {
+        hoverTime = performance.now();
+        canvas.classList.toggle('can-grab', Boolean(pick(event)));
+      }
+    });
+    for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(name, event => {
+      const active = grab || sphereGrab;
+      if (active && event.pointerId === active.pointerId) endGrab(name !== 'pointerup');
+    });
+    window.addEventListener('blur', () => endGrab(true));
+    document.addEventListener('visibilitychange', () => { endGrab(true); accumulator = 0; lastTime = 0; });
+    canvas.addEventListener('contextmenu', event => event.preventDefault());
+
+    function setMode(next) {
+      endGrab(); mode = next;
+      controls.mouseButtons.LEFT = next === 'camera' ? THREE.MOUSE.ROTATE : null;
+      controls.touches.ONE = next === 'camera' ? THREE.TOUCH.ROTATE : null;
+      document.getElementById('clothMode').setAttribute('aria-pressed', String(next === 'cloth'));
+      document.getElementById('cameraMode').setAttribute('aria-pressed', String(next === 'camera'));
+      canvas.classList.toggle('camera-mode', next === 'camera'); canvas.classList.remove('can-grab');
+    }
+    document.getElementById('clothMode').addEventListener('click', () => setMode('cloth'));
+    document.getElementById('cameraMode').addEventListener('click', () => setMode('camera'));
+    document.getElementById('stiffness').addEventListener('input', event => {
+      stiffness = Number(event.target.value) / 100;
+      document.getElementById('stiffnessValue').value = event.target.value;
+      updateCompliance();
+    });
+    let toastTimeout;
+    function toast(text) {
+      const element = document.getElementById('toast');
+      element.textContent = text; element.classList.add('visible');
+      clearTimeout(toastTimeout); toastTimeout = setTimeout(() => element.classList.remove('visible'), 2100);
+    }
+    function release() {
+      if (!attached) return;
+      endGrab(); attached = false;
+      for (const id of pins) inverseMass[id] = 1;
+      // Suspension fittings stay in place; the material falls freely.
+      document.getElementById('release').disabled = true;
+      document.getElementById('release').textContent = 'Released';
+      toast('Both anchors released');
+    }
+    function reset() {
+      endGrab(); positions.set(start); previous.set(start);
+      Object.assign(SPHERE, SPHERE_HOME);
+      sphereVelocity.set(0, 0, 0); sphereStepX = 0; sphereStepZ = 0;
+      sphere.position.set(SPHERE.x, SPHERE.y, SPHERE.z);
+      sphere.quaternion.identity();
+      inverseMass.fill(1); for (const id of pins) inverseMass[id] = 0;
+      attached = true; accumulator = 0; stepNumber = 0;
+      document.getElementById('release').disabled = false;
+      document.getElementById('release').textContent = 'Release';
+      updateGeometry();
+      toast('Cloth and sphere reset');
+    }
+    function toggleUI(force) {
+      const hidden = force === undefined ? !document.body.classList.contains('ui-hidden') : force;
+      document.body.classList.toggle('ui-hidden', hidden);
+      marker.visible = Boolean(grab) && !hidden;
+    }
+    document.getElementById('release').addEventListener('click', release);
+    document.getElementById('reset').addEventListener('click', reset);
+    document.getElementById('hide').addEventListener('click', () => toggleUI());
+    canvas.addEventListener('dblclick', () => { if (document.body.classList.contains('ui-hidden')) toggleUI(false); });
+    window.addEventListener('keydown', event => {
+      if (event.ctrlKey || event.metaKey || event.altKey || event.repeat || event.target.isContentEditable || (event.target instanceof HTMLInputElement && event.target.type !== 'range')) return;
+      if (event.code === 'KeyH') toggleUI();
+      if (event.code === 'Escape') { endGrab(true); toggleUI(false); }
+      if (event.code === 'KeyR' && window.metalClothReady) reset();
+      if (event.code === 'KeyF' && window.metalClothReady) release();
+      if (event.code === 'KeyC') setMode(mode === 'cloth' ? 'camera' : 'cloth');
+    });
+    if (matchMedia('(pointer: coarse)').matches) document.getElementById('hint').textContent = 'Drag cloth or sphere · select Camera to orbit';
+    window.addEventListener('resize', () => {
+      endGrab(); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+      frameCamera();
+    });
+
+    // Pre-roll is entirely hidden. Save its settled result for instantaneous reset.
+    initializeShape(); warm = true;
+    document.getElementById('loadingText').textContent = 'Settling the cloth over the sphere…';
+    for (let batch = 0; batch < 18; batch++) {
+      for (let i = 0; i < 40; i++) simulate();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    warm = false; start.set(positions); previous.set(positions);
+    updateGeometry();
+    renderer.render(scene, camera);
+    window.metalClothReady = true;
+    loading.classList.add('finished');
+    setTimeout(() => loading.remove(), 700);
+
+    let slowFrames = 0, sampledFrames = 0, qualityReduced = false;
+    function animate(time) {
+      requestAnimationFrame(animate);
+      if (document.hidden) { lastTime = 0; return; }
+      const elapsed = lastTime ? Math.min((time - lastTime) / 1000, .055) : STEP;
+      lastTime = time;
+      accumulator = Math.min(accumulator + elapsed, STEP * 5);
+      let steps = 0;
+      while (accumulator >= STEP && steps < 5) { simulate(); accumulator -= STEP; steps++; }
+      updateGeometry(); if (!grab && !sphereGrab) controls.update(); renderer.render(scene, camera);
+      // Preserve all 1,008 plates: reduce shadow resolution / pixel ratio first.
+      if (!qualityReduced && time > 8000 && sampledFrames < 150) {
+        sampledFrames++; if (elapsed > .035) slowFrames++;
+        if (sampledFrames === 150 && slowFrames > 65) {
+          qualityReduced = true;
+          renderer.setPixelRatio(Math.min(maxPixelRatio, 1.15));
+          key.shadow.mapSize.set(1024, 1024);
+          if (key.shadow.map) { key.shadow.map.dispose(); key.shadow.map = null; }
+        }
+      }
+    }
+    requestAnimationFrame(animate);
+
+    // Optional read-only inspection for browser verification; absent from the UI.
+    window.metalCloth = Object.freeze({
+      inspect: () => ({ plates: PLATES, vertices: COUNT, attached, grabbed: Boolean(grab), sphereGrabbed: Boolean(sphereGrab), mode, stiffness, positions: Array.from(positions), initial: Array.from(start), camera: camera.position.toArray(), renderer: { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }, sphere: { ...SPHERE }, sphereQuaternion: sphere.quaternion.toArray(), sphereVelocity: sphereVelocity.toArray(), floor: FLOOR }),
+      projectSphere: (direction = [.85, -.15, .5]) => {
+        const point = new THREE.Vector3(...direction).normalize().multiplyScalar(SPHERE.r).add(sphere.position).project(camera);
+        return { x: (point.x + 1) * innerWidth / 2, y: (1 - point.y) * innerHeight / 2 };
+      },
+      projectTile: index => {
+        plates.getMatrixAt(index, matrix);
+        const point = new THREE.Vector3().setFromMatrixPosition(matrix).project(camera);
+        return { x: (point.x + 1) * innerWidth / 2, y: (1 - point.y) * innerHeight / 2 };
+      }
+    });
+  </script>
+</body>
+</html>
